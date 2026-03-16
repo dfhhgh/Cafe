@@ -1,0 +1,3 @@
+count price = 5;
+measure total = price + 10;
+serve total;
