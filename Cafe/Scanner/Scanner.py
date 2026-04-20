@@ -1,6 +1,6 @@
 import re
 from Scanner.TokenType import TokenType
-
+from Scanner.Token import Token
 class Scanner:
 
     KEYWORDS = {
@@ -36,24 +36,45 @@ class Scanner:
         self.tokens = []
 
         self.token_regex = re.compile(
-            r"""
-            (?P<NUMBER>\d+(\.\d+)?)
-            | (?P<IDENTIFIER>[a-zA-Z_][a-zA-Z0-9_]*)
-            | (?P<PLUS>\+)
-            | (?P<MINUS>-)
-            | (?P<MULTIPLY>\*)
-            | (?P<DIVIDE>/)
-            | (?P<ASSIGN>=)
-            | (?P<LPAREN>\()
-            | (?P<RPAREN>\))
-            | (?P<LBRACE>\{)
-            | (?P<RBRACE>\})
-            | (?P<SEMICOLON>;)
-            | (?P<WHITESPACE>\s+)
-            | (?P<MISMATCH>.)
-            """,
-            re.VERBOSE
-        )
+    r"""
+    (?P<STRING>"[^"]*")
+    | (?P<CHARACTER>'[^']')
+    | (?P<NUMBER>\d+(\.\d+)?)
+    | (?P<IDENTIFIER>[a-zA-Z_][a-zA-Z0-9_]*)
+
+    # Operators (IMPORTANT: longer first)
+    | (?P<GTE>>=)
+    | (?P<LTE><=)
+    | (?P<EQ>==)
+    | (?P<NE>!=)
+    | (?P<SHIFT_LEFT><<)
+    | (?P<SHIFT_RIGHT>>)
+
+    # Single operators
+    | (?P<GT>>)
+    | (?P<LT><)
+    | (?P<PLUS>\+)
+    | (?P<MINUS>-)
+    | (?P<MULTIPLY>\*)
+    | (?P<DIVIDE>/)
+    | (?P<ASSIGN>=)
+
+    # Symbols
+    | (?P<LPAREN>\()
+    | (?P<RPAREN>\))
+    | (?P<LBRACE>\{)
+    | (?P<RBRACE>\})
+    | (?P<LBRACKET>\[)
+    | (?P<RBRACKET>\])
+    | (?P<SEMICOLON>;)
+    | (?P<COMMA>,)
+    | (?P<COLON>:)
+
+    | (?P<WHITESPACE>\s+)
+    | (?P<MISMATCH>.)
+    """,
+    re.VERBOSE
+)
 
     def get_line_column(self, position):
         line = self.source.count("\n", 0, position) + 1
@@ -88,8 +109,8 @@ class Scanner:
             else:
                 token_type = getattr(TokenType, kind)
 
-            self.tokens.append((token_type, value, line, column))
+            self.tokens.append(Token(token_type, value, column, line))
 
-        self.tokens.append((TokenType.EOF, "", line, column))
+        self.tokens.append(Token(TokenType.EOF, "", column, line))
 
         return self.tokens

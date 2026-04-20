@@ -49,4 +49,12 @@ class TokenType(Enum):
     RBRACKET=auto()
     COLON=auto()
     MISMATCH=auto()
+    GTE = auto()      # >=
+    LTE = auto()      # <=
+    EQ = auto()       # ==
+    NE = auto()       # !=
+    GT = auto()       # >
+    LT = auto()       # <
+    SHIFT_LEFT = auto()    # <<
+    SHIFT_RIGHT = auto()   # >>
    
