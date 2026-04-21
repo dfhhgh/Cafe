@@ -1,15 +1,20 @@
+from Parser_cafe.parser import BottomUpParser
 from Scanner.Scanner import Scanner
 
-# قراءة ملف cafe
-with open("test.cafe", "r") as file:
-    source_code = file.read()
+# with open("test.cafe") as f:
+#     source = f.read()
+source = """
+count x = 5 ;
+count y = 10 ;
+serve << x + y ;
+"""
 
-# إنشاء scanner
-scanner = Scanner(source_code)
+tokens = Scanner(source).scan_tokens()
 
-# تحليل التوكنز
-tokens = scanner.scan_tokens()
+parser = BottomUpParser(tokens)
+ast = parser.parse()
 
-# طباعة النتيجة
-for token in tokens:
-    print(token)
+print(ast)
+
+for stmt in ast.statements:
+    print(stmt)
