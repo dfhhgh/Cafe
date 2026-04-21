@@ -8,6 +8,11 @@ class BottomUpParser:
         self.stack = []
         self.current = 0
 
+        # 🔥 operators collection (cleaner)
+        self.REL_OPS = {
+            TT.GT, TT.LT, TT.EQ, TT.NE, TT.GTE, TT.LTE
+        }
+
     # =========================
     # 🚀 MAIN PARSE
     # =========================
@@ -25,10 +30,8 @@ class BottomUpParser:
     # =========================
     def _build_program(self):
         leftover = [x for x in self.stack if not isinstance(x, Node)]
-
         if leftover:
             raise SyntaxError(f"Unparsed tokens: {leftover}")
-
         return ProgramNode([x for x in self.stack if isinstance(x, Node)])
 
     # =========================
@@ -43,15 +46,21 @@ class BottomUpParser:
 
             if self._mul_div(): continue
             if self._add_sub(): continue
+            if self._condition(): continue
+
+            if self._block(): continue
+            if self._if_stmt(): continue
+            if self._while_stmt(): continue
 
             if self._var_decl(): continue
+            if self._var_decl_no_init(): continue
             if self._assignment(): continue
             if self._print(): continue
 
             break
 
     # =========================
-    # 🧹 BASIC REDUCTIONS
+    # BASIC
     # =========================
 
     def _remove_eof(self):
@@ -70,7 +79,6 @@ class BottomUpParser:
             token = self.stack.pop()
             self.stack.append(LiteralNode(token.value))
             return True
-
         return False
 
     def _identifier(self):
@@ -81,18 +89,13 @@ class BottomUpParser:
         return False
 
     # =========================
-    # 🧠 EXPRESSIONS
+    # EXPRESSIONS
     # =========================
 
     def _parenthesis(self):
         if len(self.stack) >= 3:
             lp, inner, rp = self.stack[-3:]
-
-            if (
-                self._is_token(lp, TT.LPAREN) and
-                isinstance(inner, Node) and
-                self._is_token(rp, TT.RPAREN)
-            ):
+            if self._is_token(lp, TT.LPAREN) and isinstance(inner, Node) and self._is_token(rp, TT.RPAREN):
                 self._pop(3)
                 self.stack.append(inner)
                 return True
@@ -107,14 +110,8 @@ class BottomUpParser:
 
         left, op, right = self.stack[-3:]
 
-        if (
-            isinstance(left, Node) and
-            self._is_token(op, [TT.PLUS, TT.MINUS]) and
-            isinstance(right, Node)
-        ):
-            # precedence check
+        if isinstance(left, Node) and self._is_token(op, [TT.PLUS, TT.MINUS]) and isinstance(right, Node):
             next_token = self._peek()
-
             if next_token and next_token.type in [TT.MULTIPLY, TT.DIVIDE]:
                 return False
 
@@ -130,11 +127,7 @@ class BottomUpParser:
 
         left, op, right = self.stack[-3:]
 
-        if (
-            isinstance(left, Node) and
-            self._is_token(op, ops) and
-            isinstance(right, Node)
-        ):
+        if isinstance(left, Node) and self._is_token(op, ops) and isinstance(right, Node):
             self._pop(3)
             self.stack.append(BinaryExprNode(left, op.type, right))
             return True
@@ -142,7 +135,79 @@ class BottomUpParser:
         return False
 
     # =========================
-    # 📦 STATEMENTS
+    # CONDITION (🔥 FIXED)
+    # =========================
+
+    def _condition(self):
+        if len(self.stack) < 3:
+            return False
+
+        left, op, right = self.stack[-3:]
+
+        if (
+            isinstance(left, Node) and
+            hasattr(op, "type") and op.type in self.REL_OPS and
+            isinstance(right, Node)
+        ):
+            self._pop(3)
+            self.stack.append(ConditionNode(left, op, right))
+            return True
+
+        return False
+
+    # =========================
+    # BLOCK
+    # =========================
+
+    def _block(self):
+        if len(self.stack) >= 3:
+            l, stmt, r = self.stack[-3:]
+            if self._is_token(l, TT.LBRACE) and isinstance(stmt, Node) and self._is_token(r, TT.RBRACE):
+                self._pop(3)
+                self.stack.append(BlockNode([stmt]))
+                return True
+        return False
+
+    # =========================
+    # IF
+    # =========================
+
+    def _if_stmt(self):
+        if len(self.stack) >= 5:
+            check, lp, cond, rp, block = self.stack[-5:]
+            if (
+                self._is_token(check, TT.CHECK) and
+                self._is_token(lp, TT.LPAREN) and
+                isinstance(cond, ConditionNode) and
+                self._is_token(rp, TT.RPAREN) and
+                isinstance(block, BlockNode)
+            ):
+                self._pop(5)
+                self.stack.append(IfNode(cond, block))
+                return True
+        return False
+
+    # =========================
+    # WHILE
+    # =========================
+
+    def _while_stmt(self):
+        if len(self.stack) >= 5:
+            stir, lp, cond, rp, block = self.stack[-5:]
+            if (
+                self._is_token(stir, TT.STIR) and
+                self._is_token(lp, TT.LPAREN) and
+                isinstance(cond, ConditionNode) and
+                self._is_token(rp, TT.RPAREN) and
+                isinstance(block, BlockNode)
+            ):
+                self._pop(5)
+                self.stack.append(WhileNode(cond, block))
+                return True
+        return False
+
+    # =========================
+    # STATEMENTS
     # =========================
 
     def _var_decl(self):
@@ -160,6 +225,23 @@ class BottomUpParser:
         ):
             self._pop(5)
             self.stack.append(VarDeclNode(dtype.type, name.name, expr))
+            return True
+
+        return False
+
+    def _var_decl_no_init(self):
+        if len(self.stack) < 3:
+            return False
+
+        dtype, name, semi = self.stack[-3:]
+
+        if (
+            self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) and
+            isinstance(name, IdentifierNode) and
+            self._is_token(semi, TT.SEMICOLON)
+        ):
+            self._pop(3)
+            self.stack.append(VarDeclNode(dtype.type, name.name, None))
             return True
 
         return False
@@ -201,7 +283,7 @@ class BottomUpParser:
         return False
 
     # =========================
-    # 🧰 HELPERS
+    # HELPERS
     # =========================
 
     def _pop(self, n):
@@ -209,9 +291,7 @@ class BottomUpParser:
             self.stack.pop()
 
     def _peek(self):
-        if self.current < len(self.tokens):
-            return self.tokens[self.current]
-        return None
+        return self.tokens[self.current] if self.current < len(self.tokens) else None
 
     def _match_token(self, index, token_type):
         if len(self.stack) >= abs(index):
@@ -222,8 +302,4 @@ class BottomUpParser:
     def _is_token(self, obj, types):
         if not hasattr(obj, "type"):
             return False
-
-        if isinstance(types, list):
-            return obj.type in types
-
-        return obj.type == types
+        return obj.type in types if isinstance(types, list) else obj.type == types

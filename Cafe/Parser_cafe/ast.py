@@ -1,20 +1,26 @@
+# ast.py
+
 class Node:
     def accept(self, visitor):
         method_name = f"visit_{type(self).__name__}"
         method = getattr(visitor, method_name, None)
 
         if method is None:
-            raise Exception(f"الـ interpreter مش عارف يتعامل مع: {type(self).__name__}")
+            raise Exception(f"Unknown node: {type(self).__name__}")
 
         return method(self)
 
+
+# =========================
+# BASIC
+# =========================
 
 class LiteralNode(Node):
     def __init__(self, value):
         self.value = value
 
     def __repr__(self):
-        return f"{self.value}"
+        return str(self.value)
 
 
 class IdentifierNode(Node):
@@ -22,8 +28,12 @@ class IdentifierNode(Node):
         self.name = name
 
     def __repr__(self):
-        return f"{self.name}"
+        return self.name
 
+
+# =========================
+# EXPRESSIONS
+# =========================
 
 class BinaryExprNode(Node):
     def __init__(self, left, op, right):
@@ -32,197 +42,121 @@ class BinaryExprNode(Node):
         self.right = right
 
     def __repr__(self):
-        op_map = {
-            "PLUS": "+",
-            "MINUS": "-",
-            "MULTIPLY": "*",
-            "DIVIDE": "/"
-        }
-        op_str = op_map.get(self.op.name, self.op.name)
-        return f"({self.left} {op_str} {self.right})"
+        return f"({self.left} {self.op.name} {self.right})"
 
-class UnaryExprNode(Node):
-    def __init__(self, op, operand):
+
+class ConditionNode(Node):
+    def __init__(self, left, op, right):
+        self.left = left
         self.op = op
-        self.operand = operand
-
-    def __repr__(self):
-        return f"({self.op}{self.operand})"
+        self.right = right
 
 
-class FunctionCallNode(Node):
-    def __init__(self, name, args):
-        self.name = name
-        self.args = args or []
-
-    def __repr__(self):
-        return f"{self.name}({self.args})"
-
-
-class ArrayAccessNode(Node):
-    def __init__(self, name, index):
-        self.name = name
-        self.index = index
-
-    def __repr__(self):
-        return f"{self.name}[{self.index}]"
-
+# =========================
+# PROGRAM
+# =========================
 
 class ProgramNode(Node):
     def __init__(self, statements):
         self.statements = statements or []
 
     def __repr__(self):
-        return f"Program({len(self.statements)} stmts)"
+        return "\n".join(str(s) for s in self.statements)
 
-    def __iter__(self):
-        return iter(self.statements)
 
+class BlockNode(Node):
+    def __init__(self, statements):
+        self.statements = statements or []
+
+    def __repr__(self):
+        return "{ " + "; ".join(str(s) for s in self.statements) + " }"
+
+
+# =========================
+# STATEMENTS
+# =========================
 
 class VarDeclNode(Node):
-    def __init__(self, data_type, name, initializer=None):
+    def __init__(self, data_type, name, value=None):
         self.data_type = data_type
         self.name = name
-        self.initializer = initializer
+        self.value = value
 
     def __repr__(self):
-        return f"{self.data_type.name.lower()} {self.name} = {self.initializer}"
-
-class ArrayDeclNode(Node):
-    def __init__(self, data_type, name, elements=None):
-        self.data_type = data_type
-        self.name = name
-        self.elements = elements or []
-
-    def __repr__(self):
-        return f"Array({self.name})"
+        return f"{self.data_type.name} {self.name} = {self.value}"
 
 
 class AssignNode(Node):
-    def __init__(self, name, value=None, op="="):
+    def __init__(self, name, value):
         self.name = name
         self.value = value
-        self.op = op
 
     def __repr__(self):
-        return f"{self.name} {self.op} {self.value}"
+        return f"{self.name} = {self.value}"
 
 
 class IOOutputNode(Node):
-    def __init__(self, expression):
-        self.expression = expression
+    def __init__(self, expr):
+        self.expr = expr
 
     def __repr__(self):
-        return f"print({self.expression})"
+        return f"print({self.expr})"
 
 
-class IOInputNode(Node):
-    def __init__(self, identifier):
-        self.identifier = identifier
-
-    def __repr__(self):
-        return f"input({self.identifier})"
-
+# =========================
+# CONTROL FLOW
+# =========================
 
 class IfNode(Node):
-    def __init__(self, condition, then_body, elseif_clauses=None, else_body=None):
+    def __init__(self, condition, then_block, else_block=None):
         self.condition = condition
-        self.then_body = then_body or []
-        self.elseif_clauses = elseif_clauses or []
-        self.else_body = else_body
-
-    def __repr__(self):
-        return f"If({self.condition})"
+        self.then_block = then_block
+        self.else_block = else_block
 
 
 class WhileNode(Node):
-    def __init__(self, condition, body):
+    def __init__(self, condition, block):
         self.condition = condition
-        self.body = body or []
-
-    def __repr__(self):
-        return f"While({self.condition})"
+        self.block = block
 
 
 class ForNode(Node):
-    def __init__(self, init, condition, update, body):
+    def __init__(self, init, condition, update, block):
         self.init = init
         self.condition = condition
         self.update = update
-        self.body = body or []
-
-    def __repr__(self):
-        return f"For({self.init}; {self.condition}; {self.update})"
+        self.block = block
 
 
-class SwitchCaseNode(Node):
+# =========================
+# SWITCH
+# =========================
+
+class CaseNode(Node):
     def __init__(self, value, body):
         self.value = value
-        self.body = body or []
-
-    def __repr__(self):
-        return f"Case({self.value})"
+        self.body = body
 
 
 class SwitchNode(Node):
-    def __init__(self, expression, cases, default_body=None):
-        self.expression = expression
-        self.cases = cases or []
-        self.default_body = default_body
-
-    def __repr__(self):
-        return f"Switch({self.expression})"
+    def __init__(self, expr, cases, default):
+        self.expr = expr
+        self.cases = cases
+        self.default = default
 
 
-class ParamNode(Node):
-    def __init__(self, data_type, name):
-        self.data_type = data_type
-        self.name = name
+# =========================
+# FUNCTIONS
+# =========================
 
-    def __repr__(self):
-        return f"{self.data_type} {self.name}"
-
-
-class FunctionDeclNode(Node):
+class FunctionNode(Node):
     def __init__(self, return_type, name, params, body):
         self.return_type = return_type
         self.name = name
-        self.params = params or []
-        self.body = body or []
-
-    def __repr__(self):
-        return f"Function({self.name})"
+        self.params = params
+        self.body = body
 
 
 class ReturnNode(Node):
-    def __init__(self, value=None):
+    def __init__(self, value):
         self.value = value
-
-    def __repr__(self):
-        return f"Return({self.value})"
-
-
-class TryCatchNode(Node):
-    def __init__(self, try_body, catch_var, catch_body):
-        self.try_body = try_body or []
-        self.catch_var = catch_var
-        self.catch_body = catch_body or []
-
-    def __repr__(self):
-        return f"TryCatch({self.catch_var})"
-
-
-class ImportNode(Node):
-    def __init__(self, module_name):
-        self.module_name = module_name
-
-    def __repr__(self):
-        return f"Import({self.module_name})"
-
-
-class ExprStmtNode(Node):
-    def __init__(self, expression):
-        self.expression = expression
-
-    def __repr__(self):
-        return f"{self.expression}"
