@@ -72,11 +72,17 @@ if __name__ == "__main__":
 
     # ❌ Test 5 (Return mismatch)
     code5 = """
-    count recipe f() {
-        bill "hello";
+    count recipe add(count a, count b) {
+        note result = a + b;
+        bill result;
     }
     """
-
+    code6 = """
+    count x=5;
+    count y = 10;
+    serve << x+ y;
+    
+    """
     # =========================
     # RUN
     # =========================
@@ -86,3 +92,4 @@ if __name__ == "__main__":
     run_code(code3)
     run_code(code4)
     run_code(code5)
+    run_code(code6)

@@ -47,6 +47,7 @@ class BottomUpParser:
         self.scope_stack = []
 
         self.REL_OPS = {TT.GT, TT.LT, TT.EQ, TT.NE, TT.GTE, TT.LTE}
+        #ده Set (مجموعة) فيها كل operators الخاصة بالمقارنة (Relational Operators)
 
     # ─────────────────────────────────────────────────────────────────────────
     # PARSE ENTRY POINT
@@ -63,7 +64,7 @@ class BottomUpParser:
             # ever shifted and reduced.  This is the only correct point in a
             # bottom-up parser to open a scope, because by the time _block()
             # fires, all inner declarations have already been processed.
-            if token.type == TT.LBRACE:
+            if token.type == TT.LBRACE: #TT هو اختصار (alias) لـ:TokenType
                 self._on_lbrace_shifted()
 
             self._reduce()
@@ -110,19 +111,43 @@ class BottomUpParser:
         """
         Inspect the stack just before the shifted '{' for the pattern:
 
-            dtype  RECIPE  IdentifierNode  LPAREN  [params]  RPAREN
+            dtype  RECIPE  IdentifierNode  [LPAREN]  [params/ParamListNode]  [RPAREN]
+        
+        OR (when params have already been reduced):
+        
+            dtype  RECIPE  IdentifierNode  ParamListNode  
+            dtype  RECIPE  IdentifierNode  ParamNode
+            dtype  RECIPE  IdentifierNode  (no params, no LPAREN/RPAREN either)
 
         Returns a (possibly empty) list of ParamNode on success, else None.
         """
         s = self.stack[:-1]   # exclude the just-shifted '{'
         n = len(s)
 
-        if n < 4:
+        if n < 3:
             return None
 
-        # s[-1] must be RPAREN
+        # Pattern 1: dtype RECIPE IdentifierNode ParamListNode (params already reduced)
+        if n >= 4:
+            dtype, recipe, name, params_or_last = s[-4], s[-3], s[-2], s[-1]
+            if (self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) and
+                self._is_token(recipe, TT.RECIPE) and
+                isinstance(name, IdentifierNode) and
+                isinstance(params_or_last, ParamListNode)):
+                return params_or_last.params
+
+        # Pattern 2: dtype RECIPE IdentifierNode ParamNode (single param, already reduced)
+        if n >= 4:
+            dtype, recipe, name, param = s[-4], s[-3], s[-2], s[-1]
+            if (self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) and
+                self._is_token(recipe, TT.RECIPE) and
+                isinstance(name, IdentifierNode) and
+                isinstance(param, ParamNode)):
+                return [param]
+
+        # Pattern 3: dtype RECIPE IdentifierNode LPAREN ... RPAREN (old pattern, tokens not yet consumed)
         if not self._is_token(s[-1], TT.RPAREN):
-            return None
+            return None if n < 4 else None
 
         # Slot before RPAREN: either LPAREN (no params) or a param node
         params = []
@@ -258,7 +283,7 @@ class BottomUpParser:
             return True
         return False
 
-    def _literal(self):
+    def _literal(self):#تحويل القيم البسيطة (Numbers / Strings) من Tokens إلى AST Nodes
         if self._match_token(-1, TT.NUMBER):
             token = self.stack.pop()
             node = LiteralNode(float(token.value))
@@ -298,7 +323,7 @@ class BottomUpParser:
         else:
             try:
                 symbol = self.symbol_table.lookup(token.value)   # raises if undeclared
-            except KeyError:
+            except Exception:
                 raise Exception(f"❌ Undefined identifier: {token.value}")
             node = IdentifierNode(token.value)
             node.dtype = symbol.data_type
@@ -550,6 +575,11 @@ class BottomUpParser:
             dtype, name = self.stack[-2:]
             if self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) \
                and isinstance(name, IdentifierNode):
+                # Don't match if the next token is ASSIGN (indicates variable declaration, not parameter)
+                next_token = self.tokens[self.current] if self.current < len(self.tokens) else None
+                if next_token and next_token.type == TT.ASSIGN:
+                    return False
+                
                 var_type = self._map_type(dtype.type)
                 self._pop(2)
                 self.stack.append(ParamNode(var_type, name.name if isinstance(name, IdentifierNode) else name.value))
@@ -630,9 +660,11 @@ class BottomUpParser:
 
     def _func_def(self):
         """
-        Two variants:
-          A) dtype RECIPE IdentNode LPAREN params RPAREN BlockNode   (with params)
-          B) dtype RECIPE IdentNode LPAREN        RPAREN BlockNode   (no params)
+        Three variants:
+          A) dtype RECIPE IdentNode LPAREN params RPAREN BlockNode   (with params, not reduced)
+          B) dtype RECIPE IdentNode LPAREN        RPAREN BlockNode   (no params, not reduced)
+          C) dtype RECIPE IdentNode ParamListNode BlockNode          (params already reduced to ParamListNode)
+          D) dtype RECIPE IdentNode ParamNode     BlockNode          (single param already reduced)
 
         ✅ FIX 1: scope + param registration already happened in _on_lbrace_shifted
            before the body was parsed, so BlockNode was built in the correct scope.
@@ -642,7 +674,58 @@ class BottomUpParser:
         """
         type_tokens = [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]
 
-        # ── variant A: with params ───────────────────────────────────────────
+        # ── variant C: params already reduced to ParamListNode ────────────────
+        if len(self.stack) >= 5:
+            dtype, recipe, name, params, block = self.stack[-5:]
+            if self._is_token(dtype, type_tokens) \
+               and self._is_token(recipe, TT.RECIPE) \
+               and isinstance(name, IdentifierNode) \
+               and isinstance(params, ParamListNode) \
+               and isinstance(block, BlockNode):
+
+                return_type = self._map_type(dtype.type)
+                param_list = params.params
+
+                self.symbol_table.declare(
+                    name.name if isinstance(name, IdentifierNode) else name.value, 
+                    Symbol(name.name, f"func<{return_type}>")
+                )
+
+                prev_type = self.current_function_type
+                self.current_function_type = return_type
+                self._pop(5)
+                func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value, param_list, block)
+                self.current_function_type = prev_type
+
+                self.stack.append(func_node)
+                return True
+
+        # ── variant D: single param already reduced to ParamNode ──────────────
+        if len(self.stack) >= 5:
+            dtype, recipe, name, param, block = self.stack[-5:]
+            if self._is_token(dtype, type_tokens) \
+               and self._is_token(recipe, TT.RECIPE) \
+               and isinstance(name, IdentifierNode) \
+               and isinstance(param, ParamNode) \
+               and isinstance(block, BlockNode):
+
+                return_type = self._map_type(dtype.type)
+
+                self.symbol_table.declare(
+                    name.name if isinstance(name, IdentifierNode) else name.value, 
+                    Symbol(name.name, f"func<{return_type}>")
+                )
+
+                prev_type = self.current_function_type
+                self.current_function_type = return_type
+                self._pop(5)
+                func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value, [param], block)
+                self.current_function_type = prev_type
+
+                self.stack.append(func_node)
+                return True
+
+        # ── variant A: with params (old pattern, tokens not reduced) ────────────
         if len(self.stack) >= 7:
             dtype, recipe, name, lp, params, rp, block = self.stack[-7:]
             if self._is_token(dtype, type_tokens) \
@@ -671,7 +754,7 @@ class BottomUpParser:
                 self.stack.append(func_node)
                 return True
 
-        # ── variant B: no params ─────────────────────────────────────────────
+        # ── variant B: no params (old pattern, tokens not reduced) ─────────────
         if len(self.stack) >= 6:
             dtype, recipe, name, lp, rp, block = self.stack[-6:]
             if self._is_token(dtype, type_tokens) \
@@ -697,7 +780,7 @@ class BottomUpParser:
 
                 self.stack.append(func_node)
                 return True
-
+        
         return False
 
     # ✅ FIX 4c: validate return expression type against the enclosing function
@@ -796,12 +879,18 @@ class BottomUpParser:
     # STATEMENTS
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _var_decl(self):
+    def _var_decl(self):#تحويل:
+# Type id = Expr ;
+# ⬇️
+# VarDeclNode + تسجيل المتغير + فحص النوع
         if len(self.stack) < 5:
             return False
         dtype, name, eq, expr, semi = self.stack[-5:]
         if self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) \
-           and isinstance(name, IdentifierNode):
+           and isinstance(name, IdentifierNode) \
+           and self._is_token(eq, TT.ASSIGN) \
+           and isinstance(expr, Node) \
+           and self._is_token(semi, TT.SEMICOLON):
             var_type = self._map_type(dtype.type)
             self.symbol_table.declare(name.name, Symbol(name.name, var_type))
             if not self._check_types(var_type, expr.dtype):
@@ -815,7 +904,9 @@ class BottomUpParser:
         if len(self.stack) < 3:
             return False
         dtype, name, semi = self.stack[-3:]
-        if self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]):
+        if self._is_token(dtype, [TT.COUNT, TT.NOTE, TT.COIN, TT.MEASURE, TT.EMO]) \
+           and isinstance(name, IdentifierNode) \
+           and self._is_token(semi, TT.SEMICOLON):
             var_type = self._map_type(dtype.type)
             self.symbol_table.declare(name.name, Symbol(name.name, var_type))
             self._pop(3)
@@ -827,7 +918,10 @@ class BottomUpParser:
         if len(self.stack) < 4:
             return False
         name, eq, expr, semi = self.stack[-4:]
-        if isinstance(name, IdentifierNode):
+        if isinstance(name, IdentifierNode) \
+           and self._is_token(eq, TT.ASSIGN) \
+           and isinstance(expr, Node) \
+           and self._is_token(semi, TT.SEMICOLON):
             symbol = self.symbol_table.lookup(name.name)
             if not self._check_types(symbol.data_type, expr.dtype):
                 raise Exception(f"❌ Type mismatch in assignment to '{name.name}'")
@@ -840,7 +934,10 @@ class BottomUpParser:
         if len(self.stack) < 4:
             return False
         serve, op, expr, semi = self.stack[-4:]
-        if self._is_token(serve, TT.SERVE):
+        if self._is_token(serve, TT.SERVE) \
+           and self._is_token(op, TT.SHIFT_LEFT) \
+           and isinstance(expr, Node) \
+           and self._is_token(semi, TT.SEMICOLON):
             self._pop(4)
             self.stack.append(IOOutputNode(expr))
             return True
