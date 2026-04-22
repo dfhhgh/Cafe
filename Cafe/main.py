@@ -83,6 +83,13 @@ if __name__ == "__main__":
     serve << x+ y;
     
     """
+#return type mismatch: bill expects count but got note
+    code7 = """
+    count recipe add() {
+        
+        bill "Hello, World!";
+    }
+    """
     # =========================
     # RUN
     # =========================
@@ -93,3 +100,4 @@ if __name__ == "__main__":
     run_code(code4)
     run_code(code5)
     run_code(code6)
+    run_code(code7)

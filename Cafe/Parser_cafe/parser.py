@@ -2,32 +2,74 @@ from .ast import *
 from Scanner.TokenType import TokenType as TT
 
 
+# Simple symbol object stored in the SymbolTable.
 class Symbol:
     def __init__(self, name, data_type):
         self.name = name
         self.data_type = data_type
 
 
+
 class SymbolTable:
     def __init__(self):
-        self.scopes = [{}]
+        # Single global dictionary for O(1) lookup
+        self.table = {}
+
+        # History stack: each entry is (name, previous_value_or_MISSING)
+        # Used to rollback declarations when a scope is popped
+        self.history = []
+
+        # Scope marker stack: each entry is the index in self.history
+        # where the current scope began, plus a set of names declared
+        # in that scope (for redeclaration detection)
+        self._scope_markers = []  # list of (history_index, set_of_declared_names)
+
+        # Bootstrap: push the global scope marker
+        self._scope_markers.append((0, set()))
+
+    _MISSING = object()  # sentinel for "key did not exist before this scope"
 
     def push_scope(self):
-        self.scopes.append({})
+        # Record where history is right now; new scope starts here
+        self._scope_markers.append((len(self.history), set()))
 
     def pop_scope(self):
-        self.scopes.pop()
+        if len(self._scope_markers) <= 1:
+            raise Exception("❌ Cannot pop the global scope")
+
+        start_index, _ = self._scope_markers.pop()
+
+        # Rollback every change made since this scope was pushed
+        while len(self.history) > start_index:
+            name, prev = self.history.pop()
+            if prev is self._MISSING:
+                # Key didn't exist before this scope → remove it
+                del self.table[name]
+            else:
+                # Key existed in an outer scope → restore old symbol
+                self.table[name] = prev
 
     def declare(self, name, symbol):
-        if name in self.scopes[-1]:
+        # Redeclaration check: is `name` already declared in THIS scope?
+        _, current_scope_vars = self._scope_markers[-1]
+        if name in current_scope_vars:
             raise Exception(f"❌ Variable '{name}' already declared in this scope")
-        self.scopes[-1][name] = symbol
+
+        # Save the previous value (or MISSING) so pop_scope can roll back
+        prev = self.table.get(name, self._MISSING)
+        self.history.append((name, prev))
+
+        # Write the new symbol into the global table
+        self.table[name] = symbol
+
+        # Mark this name as declared in the current scope
+        current_scope_vars.add(name)
 
     def lookup(self, name):
-        for scope in reversed(self.scopes):
-            if name in scope:
-                return scope[name]
-        raise Exception(f"❌ Undeclared variable '{name}'")
+        # O(1) — the global table always holds the innermost visible symbol
+        if name not in self.table:
+            raise Exception(f"❌ Undeclared variable '{name}'")
+        return self.table[name]
 
 
 class BottomUpParser:
@@ -40,6 +82,9 @@ class BottomUpParser:
 
         # ✅ FIX 4: track current function return type for return-stmt validation
         self.current_function_type = None
+
+        # Stack to preserve outer function return types when entering nested functions
+        self.function_type_stack = []
 
         # ✅ FIX 1 & 2 & 5: each entry mirrors a shifted '{' and stores whether
         # a new scope was opened for it ('func' | 'block' | None).
@@ -91,12 +136,16 @@ class BottomUpParser:
         3. Otherwise (array literal, etc.)
            → push None so scope_stack stays in sync without opening a scope.
         """
-        func_params = self._detect_function_header()
-        if func_params is not None:
+        func_info = self._detect_function_header()
+        if func_info is not None:
+            params, return_type = func_info
             self.symbol_table.push_scope()
-            for p in func_params:
+            for p in params:
                 self.symbol_table.declare(p.name, Symbol(p.name, p.type))
             self.scope_stack.append('func')
+            # Preserve outer function return-type and set current for body validation
+            self.function_type_stack.append(self.current_function_type)
+            self.current_function_type = return_type
             return
 
         # Block that follows a closing ')' → if / while / for
@@ -134,7 +183,7 @@ class BottomUpParser:
                 self._is_token(recipe, TT.RECIPE) and
                 isinstance(name, IdentifierNode) and
                 isinstance(params_or_last, ParamListNode)):
-                return params_or_last.params
+                return params_or_last.params, self._map_type(dtype.type)
 
         # Pattern 2: dtype RECIPE IdentifierNode ParamNode (single param, already reduced)
         if n >= 4:
@@ -143,7 +192,7 @@ class BottomUpParser:
                 self._is_token(recipe, TT.RECIPE) and
                 isinstance(name, IdentifierNode) and
                 isinstance(param, ParamNode)):
-                return [param]
+                return [param], self._map_type(dtype.type)
 
         # Pattern 3: dtype RECIPE IdentifierNode LPAREN ... RPAREN (old pattern, tokens not yet consumed)
         if not self._is_token(s[-1], TT.RPAREN):
@@ -178,7 +227,7 @@ class BottomUpParser:
         if lp_idx < 3 or not self._is_token(s[lp_idx - 3], type_tokens):
             return None
 
-        return params   # success – list may be empty for no-param functions
+        return params, self._map_type(s[lp_idx - 3].type)   # success – list may be empty for no-param functions
 
     # ─────────────────────────────────────────────────────────────────────────
     # PROGRAM
@@ -691,7 +740,7 @@ class BottomUpParser:
                     Symbol(name.name, f"func<{return_type}>")
                 )
 
-                prev_type = self.current_function_type
+                prev_type = self.function_type_stack.pop() if self.function_type_stack else None
                 self.current_function_type = return_type
                 self._pop(5)
                 func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value, param_list, block)
@@ -716,7 +765,7 @@ class BottomUpParser:
                     Symbol(name.name, f"func<{return_type}>")
                 )
 
-                prev_type = self.current_function_type
+                prev_type = self.function_type_stack.pop() if self.function_type_stack else None
                 self.current_function_type = return_type
                 self._pop(5)
                 func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value, [param], block)
@@ -745,7 +794,7 @@ class BottomUpParser:
                 )
 
                 # ✅ FIX 4b: track return type; restore outer function's on exit
-                prev_type = self.current_function_type
+                prev_type = self.function_type_stack.pop() if self.function_type_stack else None
                 self.current_function_type = return_type
                 self._pop(7)
                 func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value, param_list, block)
@@ -772,7 +821,7 @@ class BottomUpParser:
                 )
 
                 # ✅ FIX 4b
-                prev_type = self.current_function_type
+                prev_type = self.function_type_stack.pop() if self.function_type_stack else None
                 self.current_function_type = return_type
                 self._pop(6)
                 func_node = FunctionNode(return_type, name.name if isinstance(name, IdentifierNode) else name.value , [], block)
