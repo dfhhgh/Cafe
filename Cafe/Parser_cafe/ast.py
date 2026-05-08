@@ -263,6 +263,16 @@ class ArrayValuesNode(Node):
         return "{ " + ", ".join(map(str, self.values)) + " }"
 
 
+class ArrayAccessNode(Node):
+    def __init__(self, array_name, index_expr):
+        super().__init__()
+        self.array_name = array_name
+        self.index_expr = index_expr
+
+    def __repr__(self):
+        return f"{self.array_name}[{self.index_expr}]"
+
+
 class ArrayDeclNode(Node):
     def __init__(self, data_type, name, size, values):
         super().__init__()
