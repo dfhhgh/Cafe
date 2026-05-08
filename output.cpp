@@ -3,13 +3,21 @@
 
 using namespace std;
 
-double add(double a, double b);
+double brew(double shots);
 
-double add(double a, double b) {
-    return (a + b);
+double brew(double shots) {
+    if ((shots < 2)) {
+        return 1;
+    }
+    return (shots * brew((shots - 1)));
 }
 
 int main() {
-    cout << add(2, 3) << endl;
+    double prices[3] = { 10, 20, 30 };
+    bool ready = true;
+    char cup = 'c';
+    cout << cup << endl;
+    cout << prices[1] << endl;
+    cout << brew(5) << endl;
     return 0;
 }
